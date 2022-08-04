@@ -212,7 +212,7 @@ MRead[ 0xFF00 ]= function( self, Addr )
 end
 
 MWrite[ 0xFF00 ] = function( self, Addr, Data )
-	self.SelectDirectionKeys = band(Data,16) == 16 
+	self.SelectDirectionKeys = band(Data,16) == 16
 	self.SelectButtonKeys = band(Data,32) == 32
 end
 
@@ -287,36 +287,69 @@ for n = 0xFF80, 0xFFFE 	do MWrite[n] = WriteHighRam end
 
 
 -- SOUND
+-- https://gbdev.gg8.se/wiki/articles/Sound_Controller
 
 -- Sweep (Channel 1)
 MWrite[ 0xFF13 ] = function(self, Addr, Data)
-	--self.SweepFreq = (self.SweepFreq & 0x700) + Data
+	self.SoundFrequency[1] = band(self.SoundFrequency[1], 0x700) + Data
 end
-
 MWrite[ 0xFF14 ] = function(self, Addr, Data)
-	--self.SweepTimerEnable = Data&64 == 64
+	self.SoundFrequency[1] = band(self.SoundFrequency[1], 0xFF) + band(lshift(Data, 8), 0x700)
+	local frequency = 131072 / (2048 - self.SoundFrequency[1])
+	self:SetChannelFrequency(1, frequency)
 end
-
-MWrite[ 0xFF11 ] = function(self, Addr, Data)
-	--self.SweepTimer = 0x3F & Data
+MWrite[ 0xFF12 ] = function(self, Addr, Data)
+	local volume = rshift(band(Data, 0xF0), 4) / 0xF
+	local envelope = band(Data, 0x07) * 1 / 64
+	self:SetChannelVolume(1, volume, envelope)
 end
-
 
 -- Tone (Channel 2)
 MWrite[ 0xFF18 ] = function(self, Addr, Data)
-	--self.ToneFreq = (self.ToneFreq & 0x700) + Data
+	self.SoundFrequency[2] = band(self.SoundFrequency[2], 0x700) + Data
 end
-
 MWrite[ 0xFF19 ] = function(self, Addr, Data)
-	--self.ToneFreq = (self.ToneFreq & 0xFF) + ((Data<<8) & 0x700)
-	--self.ToneTimerEnable = Data&64 == 64
+	self.SoundFrequency[2] = band(self.SoundFrequency[2], 0xFF) + band(lshift(Data, 8), 0x700)
+	local frequency = 131072 / (2048 - self.SoundFrequency[2])
+	self:SetChannelFrequency(2, frequency)
+end
+MWrite[ 0xFF17 ] = function(self, Addr, Data)
+	local volume = rshift(band(Data, 0xF0), 4) / 0xF
+	local envelope = band(Data, 0x07) * 1 / 64
+	self:SetChannelVolume(2, volume, envelope)
 end
 
-MWrite[ 0xFF16 ] = function(self, Addr, Data)
-	--self.ToneTimer = 0x3F & Data
+-- Wave (Channel 3)
+MWrite[ 0xFF1D ] = function(self, Addr, Data)
+	self.SoundFrequency[3] = band(self.SoundFrequency[3], 0x700) + Data
+end
+MWrite[ 0xFF1E ] = function(self, Addr, Data)
+	self.SoundFrequency[3] = band(self.SoundFrequency[3], 0xFF) + band(lshift(Data, 8), 0x700)
+	local frequency = 65536 / (2048 - self.SoundFrequency[3])
+	self:SetChannelFrequency(3, frequency)
+end
+MWrite[ 0xFF1C ] = function(self, Addr, Data)
+	local volumeLevel = rshift(band(Data, 0x60), 5)
+	if volumeLevel == 2 then
+		self:SetChannelVolume(3, .5, 1)
+	elseif volumeLevel == 3 then
+		self:SetChannelVolume(3, .25, 1)
+	else
+		self:SetChannelVolume(3, volumeLevel, 1)
+	end
 end
 
-
+-- Noise (Channel 4)
+MWrite[ 0xFF21 ] = function(self, Addr, Data)
+	local volume = rshift(band(Data, 0xF0), 4) / 0xF
+	self:SetChannelVolume(4, volume, 1)
+end
+MWrite[ 0xFF22 ] = function(self, Addr, Data)
+	local s = rshift(band(Data, 0xF0), 4)
+	local r = band(Data, 0x07) or .5
+	local frequency = 524288 / r / math.pow(2, s + 1)
+	self:SetChannelFrequency(4, frequency, 1)
+end
 
 ------------------------
 -- Main R/W Functions --

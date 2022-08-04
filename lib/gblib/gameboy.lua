@@ -12,7 +12,7 @@ local rshift = bit.rshift;
 local lshift = bit.lshift;
 
 function mt:Restart()
-	
+
 
 	-- Memory
 	self.Memory = {}	-- Main Memory RAM
@@ -32,17 +32,17 @@ function mt:Restart()
 	self.BIOS[0] = 0x31		-- Used on startup, loads at 0x0 and is promptly turned off when PC hits 100
 
 
-	
+
 	-- Memory & Cart Flags
 	self.EnableBios = true 	-- Enables the Bios, disabled after the bios is used
 	self.CartMBCMode = 3	-- 0 for ROM mode, 1 for MBC1, 2 for MBC2, 3 for MBC3
 	self.RomBank = 1 		-- The current ROM bank stored in 0x4000 to 0x7FFF
 	self.RamBank = 0		-- The current RAM bank
-	
+
 	-- Registers
 	self.A = 0
 	self.B = 0
-	self.C = 0	
+	self.C = 0
 	self.D = 0
 	self.E = 0
 	self.H = 0
@@ -50,13 +50,13 @@ function mt:Restart()
 
 	self.PC = 0x0
 	self.SP = 0x0
-	
+
 	-- Internal Flags
 	self.Cf = false -- Carry
 	self.Hf = false -- Half Carry
-	self.Zf = false -- Zero 
+	self.Zf = false -- Zero
 	self.Nf = false -- Subtract
-	
+
 	-- Virtual Flags
 	self.IME = true		-- Interupt Master Enable
 	self.Halt = false 		-- is halt engaged (do nothing until an interupt)
@@ -66,8 +66,8 @@ function mt:Restart()
 	-- Interupt Hardware Registers
 	self.IE = 0 -- Interupt Enable Register: Bit0 = VBlank, Bit1 = LCD, Bit2 = Timer, Bit4 = Joypad
 	self.IF = 0 -- Interupt Request Register
-	
-	
+
+
 
 
 	--------------------------------
@@ -108,12 +108,12 @@ function mt:Restart()
 	self.CompareY = 0
 
 	-- Palettes
-	
+
 
 	------------------------------
 	-- Timer Hardware Registers --
 	------------------------------
-	
+
 	-- Timer
 	self.TimerEnabled = false 	-- Is the timer enabled?
 	self.TimerCounter = 1024  	-- The number of cycles per timer incriment
@@ -121,16 +121,16 @@ function mt:Restart()
 	self.TimerDB = {16, 64, 256}; self.TimerDB[0] = 1024 -- Cheaper than an elseif stack
 	self.TimerBase = 0 			-- The timer base, when timer overflows it resets itself to this.
 	self.Timer = 0			-- The timer itself
-	
+
 	-- Divider Timer (Incriments every 256 cycles, no interupt)
 	self.DividerCycles = 0 		-- The cycle counter for the Didiver, resets every timer incriment
-	self.Divider = 0			-- Easier to store it in a variable than in memory. 
+	self.Divider = 0			-- Easier to store it in a variable than in memory.
 
 	-- Cycles and other timing
 	self.TotalCycles = 0
 	self.Cycle = 0
 
-	-- 
+	--
 	self.DPadByte = 0xF
 	self.ButtonByte = 0xF
 
@@ -143,7 +143,7 @@ function mt:Restart()
 	self.interleve = 0x300
 	self.FrameSkip = 5
 
-	self.Pixels = {} -- Stores the pixels drawn last frame, this way we only redraw what we need to. 
+	self.Pixels = {} -- Stores the pixels drawn last frame, this way we only redraw what we need to.
 
 	for n = 0, 23040 do
 		self.Pixels[n] = 1
@@ -155,6 +155,76 @@ function mt:Restart()
 	self.oldPC = 0
 	self.NextPC = 0
 	self.Iter = 0
+
+	-- Sound
+	self.SoundFrequency = { 0, 0, 0 }
+	self.ChannelEnvelope = { 0, 0, 0, 0 }
+	self.ChannelFrequency = { 0, 0, 0, 0 }
+	self.ChannelVolume = { 0, 0, 0, 0 }
+	self.SoundHandles = { }
+end
+
+function toNote(freq)
+	return floor(12 * math.log(freq / 440) / math.log(2) + 69 + .5)
+end
+
+function mt:SetChannelFrequency(channel, frequency)
+	self:UpdateNote(channel, frequency, self.ChannelVolume[channel], self.ChannelEnvelope[channel])
+	self.ChannelFrequency[channel] = frequency
+	--print("Frequency", channel, frequency, 'Hz')
+end
+
+function mt:SetChannelVolume(channel, volume, envelope)
+	self:UpdateNote(channel, self.ChannelFrequency[channel], volume, envelope)
+	self.ChannelVolume[channel] = volume
+	self.ChannelEnvelope[channel] = envelope
+end
+
+function mt:UpdateNote(channel, frequency, volume, envelope)
+	local volumeOld = self.ChannelVolume[channel]
+	local isOnOld = volumeOld > 0
+	local isOn = volume > 0
+	local isOnChanged = isOn ~= isOnOld or volume > 0
+
+	local noteOld = toNote(self.ChannelFrequency[channel])
+	local note = toNote(frequency)
+	local isNoteChanged = note ~= noteOld
+
+	local envelopeOld = self.ChannelEnvelope[channel]
+	local hasDecayOld = envelopeOld > 0
+	local hasDecay = envelope > 0
+	local isDecayChanged = hasDecay ~= hasDecayOld
+
+	-- No note change: do nothing
+	if not(isOnChanged) and not(isNoteChanged) and not(isDecayChanged) then return end
+
+	-- Note has changed: stop previous note
+	if self.SoundHandles[channel] then
+		--Musician.Sampler.StopNote(self.SoundHandles[channel])
+		local noteOff = self.SoundHandles[channel][1]
+		local instrumentOff = self.SoundHandles[channel][2]
+		Musician.Live.NoteOff(noteOff, channel, instrumentOff)
+		self.SoundHandles[channel] = nil
+	end
+
+	-- Play note
+	if isOn then
+		local instrument
+		if channel == 3 then
+			-- Wave
+			instrument = hasDecay and Musician.MIDI_INSTRUMENTS.ElectricBassFinger or Musician.MIDI_INSTRUMENTS.Recorder
+		elseif channel == 4 then
+			-- Noise
+			instrument = Musician.MIDI_INSTRUMENTS.ReverseCymbal
+			note = 60
+		else
+			-- Square wave
+			instrument = hasDecay and Musician.MIDI_INSTRUMENTS.OrchestralHarp or Musician.MIDI_INSTRUMENTS.Clarinet
+		end
+		--self.SoundHandles[channel] = Musician.Sampler.PlayNote(instrument, note)
+		self.SoundHandles[channel] = { note, instrument }
+		Musician.Live.NoteOn(note, channel, instrument, false, self)
+	end
 end
 
 ----------------------------------------------------------------------
@@ -189,7 +259,7 @@ function mt:NextLine()
 	self:DisableDebugging()
 end
 ----------------
---Step function excutes a single operation at a time. 
+--Step function excutes a single operation at a time.
 ----------------
 function mt:Step()
 	if not self.Halt then
@@ -223,7 +293,7 @@ function mt:Step()
 		while self.TimerCycles > self.TimerCounter do -- if they overflow, then reset the timer cycles and incriment the timer
 			self.Timer = self.Timer +1
 			self.TimerCycles = self.TimerCycles - self.TimerCounter
-			if self.Timer > 255 then -- if the timer overflows, reset the timer and do the timer interupt. 
+			if self.Timer > 255 then -- if the timer overflows, reset the timer and do the timer interupt.
 				self.Timer = self.TimerBase
 				self.IF = bor(self.IF,4)
 			end
